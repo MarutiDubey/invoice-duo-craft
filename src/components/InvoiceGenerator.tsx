@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { FileText, Download, Edit, Save } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import { useToast } from '@/hooks/use-toast';
 
 interface InvoiceItem {
   id: string;
@@ -34,6 +34,7 @@ const InvoiceGenerator = () => {
   const customerInvoiceRef = useRef<HTMLDivElement>(null);
   const ownerInvoiceRef = useRef<HTMLDivElement>(null);
   const [isEditing, setIsEditing] = useState(true);
+  const { toast } = useToast();
 
   const [invoiceData, setInvoiceData] = useState<InvoiceData>({
     invoiceNumber: '12345',
@@ -56,14 +57,17 @@ const InvoiceGenerator = () => {
     total: 1800
   });
 
+  const calculateTotal = (items: InvoiceItem[]) => {
+    return items.reduce((sum, item) => sum + item.subtotal, 0);
+  };
+
   const updateInvoiceData = (field: keyof InvoiceData, value: any) => {
     setInvoiceData(prev => ({ ...prev, [field]: value }));
   };
 
   const updateItem = (id: string, field: keyof InvoiceItem, value: any) => {
-    setInvoiceData(prev => ({
-      ...prev,
-      items: prev.items.map(item => {
+    setInvoiceData(prev => {
+      const updatedItems = prev.items.map(item => {
         if (item.id === id) {
           const updatedItem = { ...item, [field]: value };
           if (field === 'quantity' || field === 'price') {
@@ -72,20 +76,16 @@ const InvoiceGenerator = () => {
           return updatedItem;
         }
         return item;
-      })
-    }));
-    
-    // Recalculate total
-    const newTotal = invoiceData.items.reduce((sum, item) => {
-      if (item.id === id) {
-        const qty = field === 'quantity' ? value : item.quantity;
-        const price = field === 'price' ? value : item.price;
-        return sum + (qty * price);
-      }
-      return sum + item.subtotal;
-    }, 0);
-    
-    setInvoiceData(prev => ({ ...prev, total: newTotal }));
+      });
+      
+      const newTotal = calculateTotal(updatedItems);
+      
+      return {
+        ...prev,
+        items: updatedItems,
+        total: newTotal
+      };
+    });
   };
 
   const addItem = () => {
@@ -105,7 +105,7 @@ const InvoiceGenerator = () => {
   const removeItem = (id: string) => {
     setInvoiceData(prev => {
       const newItems = prev.items.filter(item => item.id !== id);
-      const newTotal = newItems.reduce((sum, item) => sum + item.subtotal, 0);
+      const newTotal = calculateTotal(newItems);
       return {
         ...prev,
         items: newItems,
@@ -115,34 +115,69 @@ const InvoiceGenerator = () => {
   };
 
   const generatePDF = async (ref: React.RefObject<HTMLDivElement>, filename: string) => {
-    if (!ref.current) return;
-
-    const canvas = await html2canvas(ref.current, {
-      scale: 2,
-      useCORS: true,
-      allowTaint: true
-    });
-
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const imgWidth = 210;
-    const pageHeight = 295;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
-    let heightLeft = imgHeight;
-
-    let position = 0;
-
-    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-    heightLeft -= pageHeight;
-
-    while (heightLeft >= 0) {
-      position = heightLeft - imgHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
+    if (!ref.current) {
+      toast({
+        title: "Error",
+        description: "Could not find invoice content to generate PDF",
+        variant: "destructive"
+      });
+      return;
     }
 
-    pdf.save(filename);
+    try {
+      console.log('Starting PDF generation for:', filename);
+      
+      // Show loading toast
+      toast({
+        title: "Generating PDF...",
+        description: "Please wait while we create your PDF"
+      });
+
+      const canvas = await html2canvas(ref.current, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        logging: true
+      });
+
+      console.log('Canvas created successfully');
+
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgWidth = 210;
+      const pageHeight = 295;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let heightLeft = imgHeight;
+
+      let position = 0;
+
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+
+      while (heightLeft >= 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+
+      console.log('PDF created successfully, saving...');
+      pdf.save(filename);
+      
+      toast({
+        title: "Success!",
+        description: `PDF ${filename} has been downloaded`
+      });
+      
+    } catch (error) {
+      console.error('PDF generation failed:', error);
+      toast({
+        title: "PDF Generation Failed",
+        description: "There was an error generating the PDF. Please try again.",
+        variant: "destructive"
+      });
+    }
   };
 
   const InvoiceTemplate = ({ type, ref }: { type: 'customer' | 'owner', ref: React.RefObject<HTMLDivElement> }) => (
